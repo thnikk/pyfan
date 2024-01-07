@@ -1,0 +1,148 @@
+#!/usr/bin/python3 -u
+"""
+Simple GPU fan controller.
+Author: thnikk
+"""
+import glob
+import time
+import json
+import sys
+import os
+import signal
+
+default_config = {
+    """ Default config that gets loaded into config file """
+    "vid:pid": {
+        "speed": {"min": 0, "max": 100},
+        "temp": {"min": 60, "max": 80}
+    }
+}
+
+
+def exit_handler(signum, frame):
+    """ Disable manual PWM """
+    print(f"[{signum},{frame}]")
+    for vid_pid in profiles:
+        path = find_gpu(vid_pid)
+        if path:
+            with open(f"{path}/pwm1_enable", 'w', encoding='utf-8') as file:
+                file.write("2")
+            print("Disabling PWM for " + vid_pid)
+    sys.exit(1)
+
+
+def load_config(path, default):
+    """ Load or create json config with default """
+    config_path = os.path.expanduser(path)
+    if os.path.exists(config_path):
+        print("Config found in", config_path)
+        with open(config_path, 'r', encoding='utf-8') as config_file:
+            config = json.load(config_file)
+            if config == default:
+                print("Default config not changed, exiting.")
+                sys.exit(1)
+            else:
+                return config
+    else:
+        print("Config not found, creating in", config_path)
+        with open(config_path, "w", encoding='utf-8') as config_file:
+            json.dump(default, config_file, indent=4)
+        print("Default config created. Please edit "
+              f"{config_path} before running again.")
+        sys.exit(1)
+
+
+def find_gpu(vid_pid):
+    """ Get path for GPU for a given vendor and product id """
+    for path in glob.glob('/sys/class/hwmon/*'):
+        try:
+            with open(
+              f"{path}/device/vendor", encoding='utf-8') as vendor_file:
+                vid = vendor_file.read().strip().lstrip("0x")
+            with open(
+              f"{path}/device/device", encoding='utf-8') as product_file:
+                pid = product_file.read().strip().lstrip("0x")
+            if vid == vid_pid.split(":")[0] and pid == vid_pid.split(":")[1]:
+                return path
+        except FileNotFoundError:
+            pass
+    return None
+
+
+def read_file(path):
+    """ Get value from file """
+    with open(path, encoding='utf-8') as file:
+        return file.read().strip()
+
+
+def convert_range(prof, temp):
+    """ Converts value in range to new range """
+    mult = int(
+        ((temp - prof["temp"]["min"]) /
+            (prof["temp"]["max"] - prof["temp"]["min"])) * 100)
+    mult = min(mult, prof["speed"]["max"])
+    mult = max(mult, prof["speed"]["min"])
+    return mult
+
+
+def pwm_enable(path, device):
+    """ Enable PWM for device """
+    with open(f'{path}/pwm1_enable', 'r+', encoding='utf-8') as file:
+        if file.read().strip() != "1":
+            print(f"Enabling PWM for {device}")
+            file.write("1")
+
+
+def pwm_set(path, percentage):
+    """ Set fan pwm to given percentage """
+    with open(f'{path}/pwm1', 'w', encoding='utf-8') as file:
+        pwm = int(percentage * 2.55)
+        file.write(str(pwm))
+
+
+def main():
+    """ Wrap main loop in function to handle keyboard interrupt """
+    while True:
+        # Iterate through all devices in profile
+        for device, profile in profiles.items():
+            # Get path for device
+            device_path = find_gpu(device)
+            if not device_path:
+                continue
+            # Get temperature
+            temp_current = int(read_file(f"{device_path}/temp1_input"))/1000
+            # Use temp to calculate speed
+            fan_percent = convert_range(profile, temp_current)
+            try:
+                if last_percent[device] > fan_percent:
+                    fan_percent = last_percent[device] - 1
+            except KeyError:
+                pass
+            last_percent[device] = fan_percent
+            # Enable PWM if necessary
+            pwm_enable(device_path, device)
+            # Set fan speed
+            pwm_set(device_path, fan_percent)
+        # Only change fan speed once per second
+        time.sleep(1)
+
+
+# Check if user is root and exit if not
+if os.getuid() != 0:
+    print("Please run as root.")
+    sys.exit(1)
+
+# Load config from file
+profiles = load_config('/etc/pyfan.json', default_config)
+
+# Run handler if program receives SIGTERM
+signal.signal(signal.SIGTERM, exit_handler)
+
+# Store percentage from last loop run
+last_percent = {}
+
+# Catch keyboard interrupt for main loop
+try:
+    main()
+except KeyboardInterrupt:
+    exit_handler(None, None)

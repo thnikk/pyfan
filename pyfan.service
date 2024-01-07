@@ -1,0 +1,11 @@
+[Unit]
+Description=simple fan control
+After=default.target
+
+[Service]
+ExecStart=/usr/local/bin/pyfan
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
