@@ -6,6 +6,6 @@ Pyfan uses a json file located at `/etc/pyfan.json`. It will create a default co
 
 ## Installation
 1) Run `sudo make install` to install the script and service file.
-2) Run the script manually to create the config file.
-3) Edit the config file in `/etc/pyfan.json` and replace vid:pid with your card's vendor and product IDs.
+2) Run the script manually with `pyfan` to create the config file.
+3) Edit the config file in `/etc/pyfan.json` and replace vid:pid with your card's vendor and product IDs and any other settings you'd like to change.
 4) Enable the service with `sudo systemctl enable --now pyfan.service`.
